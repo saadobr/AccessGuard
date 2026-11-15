@@ -1,0 +1,12 @@
+{
+  "name": "accessguard-integration-tests",
+  "private": true,
+  "scripts": {
+    "test": "node backend.cjs"
+  },
+  "dependencies": {
+    "playwright": "1.65.0",
+    "pngjs": "5.0.0",
+    "jsqr": "1.4.0"
+  }
+}

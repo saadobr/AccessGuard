@@ -1,0 +1,10 @@
+using System.ComponentModel.DataAnnotations;
+namespace AccessGuard.Models;
+public record LoginRequest([Required,EmailAddress,MaxLength(120)]string Email,[Required,MaxLength(256)]string Password);
+public record CodeRequest([Required,MaxLength(80)]string Code,bool Recovery=false);
+public record PasswordRequest([Required,MaxLength(256)]string Password);
+public record SensitiveRequest([Required,MaxLength(256)]string Password,[Required,MaxLength(80)]string Code);
+public record UserRequest([Required,MaxLength(80)]string Name,[Required,EmailAddress,MaxLength(120)]string Email,[Required]string Role,[Required]string Status,[MaxLength(256)]string? Password,[MaxLength(80)]string? Version);
+public record ProfileRequest([Required,MaxLength(80)]string Name,[Required,EmailAddress,MaxLength(120)]string Email,[Required,MaxLength(256)]string Password);
+public record BootstrapRequest([Required,MaxLength(80)]string Name,[Required,EmailAddress,MaxLength(120)]string Email,[Required,MaxLength(256)]string Password);
+public record MatrixRequest(bool[][] Matrix);
