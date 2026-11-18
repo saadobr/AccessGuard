@@ -11,7 +11,7 @@ using System.Net;
 
 namespace AccessGuard.Controllers;
 [ApiController,Route("api/auth")]
-public class AuthController(AppDbContext db,UserManager<AppUser> users,SignInManager<AppUser> signin,AuditService audit,IAntiforgery csrf,IWebHostEnvironment env) : ControllerBase {
+public class AuthController(AppDbContext db,UserManager<AppUser> users,SignInManager<AppUser> signin,AuditService audit,IAntiforgery csrf,IWebHostEnvironment env,BruteForceProtection bruteForce) : ControllerBase {
     [AllowAnonymous,HttpGet("session")]
     public async Task<IActionResult> Session(){var me=await users.GetUserAsync(User);return Ok(new{authenticated=me!=null,bootstrap=await db.Users.CountAsync()==0,token=csrf.GetAndStoreTokens(HttpContext).RequestToken,name=me?.FullName});}
     [AllowAnonymous,HttpPost("bootstrap"),EnableRateLimiting("authentication")]
@@ -28,20 +28,43 @@ public class AuthController(AppDbContext db,UserManager<AppUser> users,SignInMan
     }
     [AllowAnonymous,HttpPost("login"),EnableRateLimiting("authentication")]
     public async Task<IActionResult> Login(LoginRequest r){
+        if(await bruteForce.GetActiveBlockAsync() is DateTime blockedUntil)return IpBlocked(blockedUntil);
+
+        const string message="Identifiants invalides ou compte temporairement indisponible.";
         var user=await users.FindByEmailAsync(r.Email.Trim());
-        if(user==null||!user.IsActive){await audit.WriteAsync("Connexion refusée","Authentification","Échec",actor:"Compte non authentifié");return Unauthorized(new{message="Identifiants invalides ou compte temporairement indisponible."});}
+        if(user==null||!user.IsActive){
+            var expiry=await bruteForce.RecordFailureAsync(BruteForceProtection.RejectedLogin,"Échec",actor:"Compte non authentifié");
+            return expiry is DateTime block?IpBlocked(block):Unauthorized(new{message});
+        }
+
         var result=await signin.PasswordSignInAsync(user,r.Password,false,true);
-        await audit.WriteAsync(result.RequiresTwoFactor?"Second facteur demandé":result.Succeeded?"Connexion":"Tentative de connexion","Authentification",result.Succeeded||result.RequiresTwoFactor?"Succès":result.IsLockedOut?"Bloqué":"Échec",user.Id,user.Email);
-        if(result.RequiresTwoFactor)return Ok(new{requiresTwoFactor=true});
-        if(!result.Succeeded)return Unauthorized(new{message="Identifiants invalides ou compte temporairement indisponible."});
-        return Ok(new{requiresTwoFactor=false});
+        if(!result.Succeeded&&!result.RequiresTwoFactor){
+            var expiry=await bruteForce.RecordFailureAsync(BruteForceProtection.PasswordAttempt,result.IsLockedOut?"Bloqué":"Échec",user.Id,user.Email);
+            return expiry is DateTime block?IpBlocked(block):Unauthorized(new{message});
+        }
+
+        await audit.WriteAsync(result.RequiresTwoFactor?"Second facteur demandé":"Connexion",BruteForceProtection.AuthResource,target:user.Id,actor:user.Email);
+        return Ok(new{requiresTwoFactor=result.RequiresTwoFactor});
     }
     [AllowAnonymous,HttpPost("twofactor"),EnableRateLimiting("authentication")]
     public async Task<IActionResult> TwoFactor(CodeRequest r){
+        if(await bruteForce.GetActiveBlockAsync() is DateTime blockedUntil)return IpBlocked(blockedUntil);
+
         var user=await signin.GetTwoFactorAuthenticationUserAsync();if(user==null||!user.IsActive)return Unauthorized(new{message="Recommencez la connexion."});
         var result=r.Recovery?await signin.TwoFactorRecoveryCodeSignInAsync(r.Code.Trim()):await signin.TwoFactorAuthenticatorSignInAsync(r.Code.Replace(" ","").Replace("-",""),false,false);
-        await audit.WriteAsync("Vérification du second facteur","Authentification",result.Succeeded?"Succès":result.IsLockedOut?"Bloqué":"Échec",user.Id,user.Email);
-        if(!result.Succeeded)return Unauthorized(new{message="Code incorrect, expiré ou compte verrouillé."});return Ok(new{message="Connexion établie."});
+        if(!result.Succeeded){
+            var expiry=await bruteForce.RecordFailureAsync(BruteForceProtection.SecondFactorAttempt,result.IsLockedOut?"Bloqué":"Échec",user.Id,user.Email);
+            return expiry is DateTime block?IpBlocked(block):Unauthorized(new{message="Code incorrect, expiré ou compte verrouillé."});
+        }
+
+        await audit.WriteAsync(BruteForceProtection.SecondFactorAttempt,BruteForceProtection.AuthResource,target:user.Id,actor:user.Email);
+        return Ok(new{message="Connexion établie."});
+    }
+
+    private ObjectResult IpBlocked(DateTime until){
+        var retryAfter=Math.Max(1,(int)Math.Ceiling((until-DateTime.UtcNow).TotalSeconds));
+        Response.Headers.RetryAfter=retryAfter.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return StatusCode(StatusCodes.Status429TooManyRequests,new{message="Trop de tentatives de connexion. Réessayez dans quelques minutes.",retryAfter});
     }
     [Authorize,HttpPost("logout")]
     public async Task<IActionResult> Logout(){await audit.WriteAsync("Déconnexion","Authentification");await signin.SignOutAsync();return Ok(new{message="Session fermée."});}

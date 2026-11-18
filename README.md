@@ -27,6 +27,10 @@ Désactiver un compte ou modifier son rôle invalide ses sessions via le securit
 ## Authentification et sécurité
 - Mots de passe hachés par Identity ; cookies HttpOnly, SameSite=Lax, expiration glissante de 30 minutes et Secure en production.
 - Cinq échecs de connexion : verrouillage temporaire de quinze minutes.
+- Dix échecs depuis la même IP en cinq minutes déclenchent une alerte dans Audit & SOC et un blocage de quinze minutes sur la connexion et la vérification 2FA. Le blocage expire automatiquement et l’API renvoie HTTP 429 avec `Retry-After` pendant sa durée. Les alertes sont enregistrées dans SQLite et la protection reprend après un redémarrage avec la même configuration.
+- La section `AccessGuard:BruteForce` permet de définir `MaxFailures`, `WindowSeconds` et `BlockSeconds`. Les valeurs par défaut sont `10`, `300` et `900`.
+- Quatre échecs de vérification du mot de passe ou de la 2FA visant le même compte depuis au moins trois IP dans cette fenêtre déclenchent une alerte de brute force distribuée et un verrouillage Identity du compte. `DistributedMaxFailures` et `DistributedMinIps` règlent ces seuils. La durée suit `BlockSeconds`.
+- Des mots de passe incorrects visant cinq comptes connus distincts depuis la même IP dans la fenêtre configurée déclenchent une alerte **Password spraying suspecté** et le blocage temporaire de cette IP. `SprayMinAccounts` règle le seuil. Le signal repose sur les cibles et la fréquence des échecs.
 - Limitation de débit : 60 requêtes/minute/IP sur les endpoints de connexion et les opérations sensibles du compte ; dépassement = HTTP 429.
 - Protection antiforgery sur les opérations POST/PUT ; jeton obtenu via /api/auth/session et transmis dans X-CSRF-TOKEN.
 - Authenticator/TOTP vérifié par Identity, flux de mot de passe puis second facteur ; aucun cookie de session complet avant la vérification du second facteur.
@@ -40,6 +44,12 @@ Connexions, échecs, verrouillages, déconnexions, modifications de comptes/perm
 
 Journal en ajout seul dans le code EF et sans endpoint de modification/suppression. L’administrateur de la base ou du système peut néanmoins modifier le fichier : ce journal n’est pas une preuve d’intégrité cryptographique ou une certification de conformité. Les listes renvoient au maximum 500 événements après filtrage ; l’export est limité à 10 000. Les filtres de dates portent sur des journées UTC.
 
+Les alertes brute force et les adresses IP sont visibles dans le journal, recherchables et incluses dans l’export CSV. L’IP est celle observée par le serveur. En cas de déploiement derrière un reverse proxy, configurer le traitement des en-têtes transférés avec les adresses de proxy de confiance avant d’exposer l’application.
+
+Le centre de sécurité d’Audit & SOC présente sept journées UTC d’activité de connexion, les alertes, la couverture 2FA des comptes actifs et des administrateurs, ainsi que les seuils en vigueur. Il affiche les blocages en cours et leur expiration. La file d’incidents permet de rechercher et de filtrer les alertes par gravité et statut. Chaque détail présente jusqu’à 100 tentatives. Les nouvelles alertes enregistrent la fenêtre de corrélation. Les alertes précédentes utilisent la fenêtre actuellement configurée. Les verrouillages Identity ordinaires affichent les tentatives récentes du compte.
+
+La consultation requiert `audit.read`. Un administrateur autorisé à consulter l’audit peut régler la gravité et le statut, prendre en charge un incident et ajouter une note. La résolution demande une note. Le journal d’audit et l’historique de triage conservent chaque mise à jour. La fermeture administrative d’un incident reflète le triage. Le compte à rebours de blocage dépend de son expiration.
+
 ## Tests d’intégration
 Les tests créent une base séparée sous tests/.data et ne touchent pas à votre base de travail.
 
@@ -47,6 +57,7 @@ Les tests créent une base séparée sous tests/.data et ne touchent pas à votr
 dotnet build AccessGuard/AccessGuard.csproj
 npm install --prefix tests
 npm test --prefix tests
+npm run test:brute-force --prefix tests
 ```
 
 Sous Windows, Brave est utilisé par défaut. Définir BROWSER_PATH pour un autre exécutable Chromium/Edge, ou installer Chromium de Playwright si aucun navigateur local n’est configuré. DOTNET_EXE peut préciser le chemin du SDK. Résultats dans tests/results.

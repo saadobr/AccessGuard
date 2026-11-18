@@ -119,6 +119,9 @@ namespace AccessGuard.Data.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime?>("IncidentWindowStart")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("SearchText")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -137,6 +140,28 @@ namespace AccessGuard.Data.Migrations
                     b.HasIndex("Time");
 
                     b.ToTable("AuditEvents");
+                });
+
+            modelBuilder.Entity("AccessGuard.Data.IncidentReview", b =>
+                {
+                    b.Property<long>("Id").ValueGeneratedOnAdd().HasColumnType("INTEGER");
+                    b.Property<long>("AlertId").HasColumnType("INTEGER");
+                    b.Property<DateTime>("Time").HasColumnType("TEXT");
+                    b.Property<string>("Actor").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("Status").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("Severity").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("OwnerId").HasColumnType("TEXT");
+                    b.Property<string>("Owner").HasColumnType("TEXT");
+                    b.Property<string>("Note").IsRequired().HasColumnType("TEXT");
+                    b.HasKey("Id");
+                    b.HasIndex("AlertId", "Id");
+                    b.ToTable("IncidentReviews");
+                });
+
+            modelBuilder.Entity("AccessGuard.Data.IncidentReview", b =>
+                {
+                    b.HasOne("AccessGuard.Data.AuditEvent", null).WithMany().HasForeignKey("AlertId")
+                        .OnDelete(DeleteBehavior.Restrict).IsRequired();
                 });
 
             modelBuilder.Entity("AccessGuard.Data.RolePermission", b =>

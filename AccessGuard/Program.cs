@@ -37,6 +37,15 @@ builder.Services.AddAuthorization(o=>{
 });
 builder.Services.AddScoped<IAuthorizationHandler,PermissionHandler>();
 builder.Services.AddScoped<AuditService>();builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<BruteForceProtection>();
+builder.Services.AddScoped<AuditIncidents>();
+builder.Services.AddScoped<IncidentWorkflow>();
+builder.Services.AddScoped<SecurityAnalytics>();
+builder.Services.AddOptions<BruteForceOptions>().BindConfiguration("AccessGuard:BruteForce")
+    .Validate(o=>o.MaxFailures>0&&o.WindowSeconds>0&&o.BlockSeconds>0,"Les seuils et durées de protection doivent être positifs.")
+    .Validate(o=>o.DistributedMinIps>=2&&o.DistributedMaxFailures>=o.DistributedMinIps,"La détection distribuée doit couvrir au moins deux IP et autant d’échecs que d’IP.")
+    .Validate(o=>o.SprayMinAccounts>=2,"La détection multi-comptes doit couvrir au moins deux comptes.")
+    .ValidateOnStart();
 builder.Services.AddAntiforgery(o=>{o.HeaderName="X-CSRF-TOKEN";o.Cookie.Name="AccessGuard.Csrf";o.Cookie.SameSite=SameSiteMode.Strict;o.Cookie.SecurePolicy=builder.Environment.IsDevelopment()?CookieSecurePolicy.SameAsRequest:CookieSecurePolicy.Always;});
 builder.Services.AddControllersWithViews(o=>o.Filters.Add(new AutoValidateAntiforgeryTokenAttribute()));
 builder.Services.AddRateLimiter(o=>{o.RejectionStatusCode=429;o.OnRejected=async(c,t)=>{c.HttpContext.Response.StatusCode=429;c.HttpContext.Response.Headers.RetryAfter="60";await c.HttpContext.Response.WriteAsJsonAsync(new{message="Trop de tentatives. Réessayez dans une minute."},t);};o.AddPolicy("authentication",h=>RateLimitPartition.GetFixedWindowLimiter(h.Connection.RemoteIpAddress?.ToString()??"local",_=>new FixedWindowRateLimiterOptions{PermitLimit=60,Window=TimeSpan.FromMinutes(1),QueueLimit=0}));});

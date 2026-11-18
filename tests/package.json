@@ -2,7 +2,8 @@
   "name": "accessguard-integration-tests",
   "private": true,
   "scripts": {
-    "test": "node backend.cjs"
+    "test": "node backend.cjs",
+    "test:brute-force": "node brute-force.cjs"
   },
   "dependencies": {
     "playwright": "1.65.0",

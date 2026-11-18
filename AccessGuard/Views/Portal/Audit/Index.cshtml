@@ -1,1 +1,65 @@
-<div id="page-content" class="soc-page"></div>
+<div id="page-content" class="soc-page security-console">
+    <header class="security-hero">
+        <div>
+            <h1>Centre de sécurité</h1>
+            <p>Surveillez les connexions et prenez en charge les incidents de votre organisation.</p>
+        </div>
+        <nav aria-label="Sections du centre de sécurité" class="security-nav">
+            <a href="#security-overview">Activité</a>
+            <a href="#incident-panel">Incidents</a>
+            <a href="#audit-journal">Journal</a>
+        </nav>
+    </header>
+
+    <section id="security-overview" aria-labelledby="security-overview-title" class="security-overview">
+        <div class="security-section-heading"><h2 id="security-overview-title">Activité et protection</h2><span>7 derniers jours · UTC</span></div>
+        <div id="security-indicators" class="security-indicators" aria-live="polite"></div>
+        <div class="security-overview-grid">
+            <section class="panel security-chart-panel" aria-labelledby="auth-chart-title">
+                <div class="panel-header"><div><h3 id="auth-chart-title">Activité de connexion</h3><p>Connexions réussies, refus journalisés et alertes de sécurité.</p></div></div>
+                <div id="security-chart" class="panel-body" aria-live="polite">Chargement de l’activité…</div>
+            </section>
+            <section class="panel" aria-labelledby="security-policy-title">
+                <div class="panel-header"><h3 id="security-policy-title">Protections en vigueur</h3></div>
+                <div id="security-policy" class="panel-body">Chargement des paramètres…</div>
+            </section>
+        </div>
+    </section>
+
+    <section class="panel soc-panel" id="incident-panel" aria-labelledby="incident-heading">
+        <div class="panel-header"><div><h2 id="incident-heading">Incidents</h2><p>Consultez les blocages et suivez le triage des alertes.</p></div><button type="button" class="button secondary" id="refresh-incidents">Actualiser</button></div>
+        <div class="panel-body incident-body">
+            <h3>Blocages actifs</h3>
+            <p id="incident-status" role="status">Chargement des blocages…</p>
+            <div class="table-wrap" id="active-block-table" hidden><table><thead><tr><th>Cible</th><th>Motif</th><th>Fin du blocage (UTC)</th><th>Temps restant</th><th>Détail</th></tr></thead><tbody id="active-block-rows"></tbody></table></div>
+            <p id="no-active-block" class="empty" hidden>Aucun blocage actif.</p>
+            <h3 class="security-queue-heading">File d’incidents</h3>
+            <form class="security-filters" id="incident-filters">
+                <label>Cible ou motif <input type="search" name="query" maxlength="120" placeholder="IP, compte, brute force…" /></label>
+                <label>Statut <select name="status"><option value="">Tous les statuts</option><option value="nouveau">Nouveau</option><option value="en-cours">En cours</option><option value="resolu">Résolu</option></select></label>
+                <label>Gravité <select name="severity"><option value="">Toutes les gravités</option><option value="faible">Faible</option><option value="moyenne">Moyenne</option><option value="elevee">Élevée</option><option value="critique">Critique</option></select></label>
+                <button type="submit" class="button secondary">Filtrer</button>
+            </form>
+            <div class="table-wrap"><table><thead><tr><th>Incident · UTC</th><th>Cible</th><th>Gravité</th><th>Statut</th><th>Responsable</th><th>Détail</th></tr></thead><tbody id="recent-incident-rows"></tbody></table></div>
+            <div class="security-pagination"><p id="incident-page-status" role="status"></p><div><button type="button" class="button secondary" id="incident-previous" disabled>Précédente</button><button type="button" class="button secondary" id="incident-next" disabled>Suivante</button></div></div>
+        </div>
+        <dialog id="incident-detail" class="incident-dialog" aria-labelledby="incident-detail-title">
+            <div class="dialog-heading"><h2 id="incident-detail-title">Détail de l’incident</h2><form method="dialog"><button type="submit" class="button secondary">Fermer</button></form></div>
+            <div id="incident-detail-body" class="incident-detail-body"></div>
+        </dialog>
+    </section>
+
+    <section class="panel soc-panel" id="audit-journal" aria-labelledby="audit-journal-title">
+        <div class="panel-header"><div><h2 id="audit-journal-title">Journal d’audit</h2><p>Consultez les événements, comptes et changements de permissions.</p></div><button class="button secondary" id="export-audit" type="button" hidden>Exporter le CSV</button></div>
+        <div class="panel-body">
+            <form id="audit-filters" class="security-filters">
+                <label>Rechercher <input type="search" id="audit-search" maxlength="120" placeholder="Compte, action ou IP" /></label>
+                <label>Résultat <select id="result-filter"><option value="">Tous les statuts</option><option value="unsuccessful">Alertes et refus</option><option>Succès</option><option>Échec</option><option>Bloqué</option><option>Refusé</option></select></label>
+                <label>Du (UTC) <input type="date" id="audit-from" /></label>
+                <label>Au (UTC) <input type="date" id="audit-to" /></label>
+                <button type="submit" class="button secondary">Filtrer</button><button type="button" class="text-button" id="clear-audit">Effacer</button>
+            </form>
+            <div id="audit-table"></div><p class="security-result-count" id="audit-count" role="status">Chargement du journal…</p>
+        </div>
+    </section>
+</div>

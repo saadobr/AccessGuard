@@ -8,3 +8,5 @@ public record UserRequest([Required,MaxLength(80)]string Name,[Required,EmailAdd
 public record ProfileRequest([Required,MaxLength(80)]string Name,[Required,EmailAddress,MaxLength(120)]string Email,[Required,MaxLength(256)]string Password);
 public record BootstrapRequest([Required,MaxLength(80)]string Name,[Required,EmailAddress,MaxLength(120)]string Email,[Required,MaxLength(256)]string Password);
 public record MatrixRequest(bool[][] Matrix);
+public record IncidentReviewRequest(long Version, [Required,MaxLength(16)] string Status,
+    [Required,MaxLength(16)] string Severity, [Required,MaxLength(12)] string Assignment, [MaxLength(1000)] string? Note);
