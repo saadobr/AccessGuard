@@ -2,7 +2,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 namespace AccessGuard.Controllers;
 
-// Front-end demonstration. All routes remain public until the Identity backend is implemented.
 public class PortalController : Controller
 {
     private IActionResult Page(string page, string title, string view = "Index") {

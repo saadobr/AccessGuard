@@ -28,7 +28,7 @@
   const resultBadge = text => badge(text,text==='Succès'?'success':(text==='Échec'||text==='Bloqué')?'danger':'warning');
   const person = u => `<div class="person"><span class="avatar">${esc(initials(u.name))}</span><div><strong>${esc(u.name)}</strong><small>${esc(u.email)}</small></div></div>`;
   const heading = (title,sub,action='') => `<div class="page-heading"><div><p class="section-label">ACCESSGUARD / GESTION DES IDENTITÉS</p><h1>${title}</h1><p class="subtitle">${sub}</p></div>${action}</div>`;
-  function auditTable(logs){return `<div class="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Événement</th><th>Ressource</th><th>Date et heure UTC</th><th>Résultat</th></tr></thead><tbody>${logs.length?logs.map(l=>`<tr class="audit-row" data-result="${esc(l.result)}"><td><strong>${esc(l.user)}</strong></td><td>${esc(l.action)}</td><td>${esc(l.resource)}</td><td class="timestamp">${date(l.time)}</td><td>${resultBadge(l.result)}</td></tr>`).join(''):'<tr><td colspan="5" class="empty">Aucun événement ne correspond aux filtres.</td></tr>'}</tbody></table></div>`;}
+  function auditTable(logs){return `<div class="table-wrap"><table><thead><tr><th>Utilisateur</th><th>Événement</th><th>Ressource</th><th>Date et heure UTC</th><th>Résultat</th><th>Adresse IP</th></tr></thead><tbody>${logs.length?logs.map(l=>`<tr class="audit-row" data-result="${esc(l.result)}"><td><strong>${esc(l.user)}</strong></td><td>${esc(l.action)}</td><td>${esc(l.resource)}</td><td class="timestamp">${date(l.time)}</td><td>${resultBadge(l.result)}</td><td class="mono">${esc(l.ip||'—')}</td></tr>`).join(''):'<tr><td colspan="6" class="empty">Aucun événement ne correspond aux filtres.</td></tr>'}</tbody></table></div>`;}
   function dashboard(){
     const active=db.users.filter(u=>u.status==='Actif'),missing=active.filter(u=>!u.mfa),issues=db.logs.filter(l=>l.result!=='Succès'),coverage=active.length?Math.round((active.length-missing.length)/active.length*100):0;
     content.innerHTML=`<div class="page-heading"><div><p class="section-label">VOTRE ORGANISATION, EN UN REGARD</p><h1>Vue d’ensemble</h1><p class="subtitle">Les identités à suivre. Les accès à comprendre. Les décisions à prendre.</p></div><a class="button primary" href="/Portal/Users">Gérer les utilisateurs <span aria-hidden="true">↗</span></a></div>
@@ -49,20 +49,199 @@
   ['close-dialog','cancel-dialog'].forEach(id=>document.getElementById(id).onclick=()=>dialog.close());
   form.onsubmit=async e=>{e.preventDefault();const id=form.elements.id.value;const data={name:form.elements.name.value.trim().replace(/\s+/g,' '),email:form.elements.email.value.trim().toLowerCase(),role:form.elements.role.value,status:form.elements.status.value,password:form.elements.password.value||null,version:id?db.users.find(u=>u.id===id)?.version:null};const submit=form.querySelector('[type=submit]');submit.disabled=true;try{await api(id?'/api/users/'+encodeURIComponent(id):'/api/users',id?'PUT':'POST',data);await reload();dialog.close();users();applyPermissions();toast('Utilisateur enregistré.');}catch(error){document.getElementById('form-error').textContent=error.message;}finally{submit.disabled=false;}};
   function rolePage(){content.innerHTML=heading('Rôles et permissions','Définissez les responsabilités avec une matrice RBAC lisible.')+`<div class="role-list">${roles.map((r,i)=>`<section class="role-description"><h2>${r}</h2><p>${['Administration des identités et des permissions.','Consultation et export des événements d’audit.','Accès à son espace personnel.'][i]}</p>${badge(db.users.filter(u=>u.role===r).length+' utilisateur(s)','neutral')}</section>`).join('')}</div><section class="panel"><div class="panel-header"><div><h2>Matrice des permissions</h2><p>Modifiez les cases pour préparer vos règles d’accès.</p></div><button id="save-roles" class="button primary">Enregistrer la matrice</button></div><div class="table-wrap"><table class="permission-table"><thead><tr><th>Permission</th>${roles.map(r=>`<th>${r}</th>`).join('')}</tr></thead><tbody>${permissions.map((p,j)=>`<tr><td><strong>${p}</strong></td>${roles.map((r,i)=>`<td><input type="checkbox" data-role="${i}" data-permission="${j}" aria-label="${p} : ${r}" ${db.matrix[i][j]?'checked':''}></td>`).join('')}</tr>`).join('')}</tbody></table></div></section><p class="notice-text">Ces permissions sont vérifiées sur le serveur à chaque requête.</p>`;document.getElementById('save-roles').onclick=async e=>{const matrix=db.matrix.map(r=>[...r]);document.querySelectorAll('[data-permission]').forEach(c=>matrix[Number(c.dataset.role)][Number(c.dataset.permission)]=c.checked);e.currentTarget.disabled=true;try{await api('/api/roles','PUT',{matrix});await reload();toast('Permissions enregistrées sur le serveur.');}catch(error){toast(error.message);}finally{document.getElementById('save-roles').disabled=false;}};document.querySelectorAll('[data-role="0"]').forEach(c=>c.disabled=true);}
+  const incidentStatuses = {nouveau:'Nouveau', 'en-cours':'En cours', resolu:'Résolu'};
+  const incidentSeverities = {faible:'Faible', moyenne:'Moyenne', elevee:'Élevée', critique:'Critique'};
+  const incidentSeverityBadge = severity => badge(incidentSeverities[severity], ({faible:'neutral', moyenne:'warning', elevee:'danger', critique:'danger'})[severity]);
+  const incidentStatusBadge = status => badge(incidentStatuses[status], ({nouveau:'neutral', 'en-cours':'warning', resolu:'success'})[status]);
+  const statusMessage = error => error instanceof TypeError
+    ? 'Le serveur AccessGuard ne répond pas. Vérifiez qu’il est lancé puis réessayez.' : error.message;
+
+  function incidentReview(review){
+    if(!review)return '';
+    const options = (labels,current) => Object.entries(labels).map(([value,label]) =>
+      `<option value="${value}" ${value===current?'selected':''}>${label}</option>`).join('');
+    const history = review.history.length ? `<ol class="incident-timeline">${review.history.map(item =>
+      `<li><header><strong>${esc(item.actor)}</strong><time>${date(item.time)} UTC</time></header><div class="incident-chip-row">${incidentStatusBadge(item.status)}${incidentSeverityBadge(item.severity)}<span>${esc(item.owner||'Sans responsable')}</span></div>${item.note?`<p>${esc(item.note)}</p>`:''}</li>`).join('')}</ol>`
+      : '<p class="muted">Aucune action de triage enregistrée.</p>';
+    const form = review.canManage ? `<form id="incident-review-form" class="incident-review-form">
+      <div class="security-filters"><label>Statut <select name="status">${options(incidentStatuses,review.status)}</select></label>
+      <label>Gravité <select name="severity">${options(incidentSeverities,review.severity)}</select></label>
+      <label>Affectation <select name="assignment"><option value="keep">Conserver</option>${review.isMine?'':'<option value="claim">Me l’attribuer</option>'}${review.owner?'<option value="release">Retirer le responsable</option>':''}</select></label></div>
+      <label>Note de triage <textarea name="note" rows="3" maxlength="1000" placeholder="Une note est requise pour résoudre l’incident."></textarea></label>
+      <div class="incident-form-actions"><button type="submit" class="button primary">Enregistrer le triage</button><p id="incident-review-status" role="status"></p></div>
+      </form>` : '';
+    return `<section class="incident-review"><h3>Triage</h3><div class="incident-chip-row">${incidentStatusBadge(review.status)}${incidentSeverityBadge(review.severity)}<span>${esc(review.owner||'Sans responsable')}</span></div>${form}
+      <details class="incident-history"><summary>Historique du triage (${review.history.length})</summary>${history}</details></section>`;
+  }
+
+  function bindIncidents(){
+    const panel = document.getElementById('incident-panel');
+    const blockTable = document.getElementById('active-block-table');
+    const blockRows = document.getElementById('active-block-rows');
+    const recent = document.getElementById('recent-incident-rows');
+    const empty = document.getElementById('no-active-block');
+    const dialog = document.getElementById('incident-detail');
+    const detail = document.getElementById('incident-detail-body');
+    const refreshButton = document.getElementById('refresh-incidents');
+    const filters = document.getElementById('incident-filters');
+    const previous = document.getElementById('incident-previous');
+    const next = document.getElementById('incident-next');
+    const queueStatus = document.getElementById('incident-page-status');
+    const status = document.getElementById('incident-status');
+    let serverTime = 0, receivedAt = 0, detailRequest = 0, queueRequest = 0, currentPage = 1;
+
+    function updateCountdowns(){
+      if(!serverTime)return;
+      const now = serverTime + performance.now() - receivedAt;
+      let active = 0;
+      for(const countdown of blockRows.querySelectorAll('[data-expires]')){
+        const seconds = Math.max(0, Math.ceil((Date.parse(countdown.dataset.expires) - now) / 1000));
+        countdown.closest('tr').hidden = seconds === 0;
+        if(seconds>0)active++;
+        countdown.textContent = `${Math.floor(seconds / 60)} min ${String(seconds % 60).padStart(2,'0')} s`;
+      }
+      blockTable.hidden = active === 0;
+      empty.hidden = active !== 0;
+    }
+
+    const detailsButton = path => `<button type="button" class="text-button" data-incident-path="${esc(path)}">Voir le détail</button>`;
+    async function refreshBlocks(){
+      status.textContent = 'Chargement des blocages…';
+      try{
+        const {checkedAt,blocks} = await api('/api/audit/incidents');
+        serverTime = Date.parse(checkedAt);
+        receivedAt = performance.now();
+        blockRows.innerHTML = blocks.map(block => `<tr><td><strong>${esc(block.target)}</strong></td><td>${esc(block.reason)}</td><td class="timestamp">${date(block.expiresAt)}</td><td class="mono" data-expires="${esc(block.expiresAt)}"></td><td>${detailsButton(block.incidentId ?? `accounts/${encodeURIComponent(block.accountId)}`)}</td></tr>`).join('');
+        status.textContent = '';
+        updateCountdowns();
+      }catch(error){status.textContent = statusMessage(error);}
+    }
+
+    async function refreshQueue(page = currentPage){
+      const sequence = ++queueRequest;
+      const params = new URLSearchParams(new FormData(filters));
+      params.set('page', page);
+      queueStatus.textContent = 'Chargement des incidents…';
+      try{
+        const queue = await api(`/api/audit/queue?${params}`);
+        if(sequence!==queueRequest)return;
+        currentPage = queue.page;
+        recent.innerHTML = queue.items.length ? queue.items.map(item => `<tr><td><strong>${esc(item.reason)}</strong><small class="security-table-meta">${date(item.time)}</small></td><td>${esc(item.target)}</td><td>${incidentSeverityBadge(item.severity)}</td><td>${incidentStatusBadge(item.status)}</td><td>${esc(item.owner||'Sans responsable')}</td><td>${detailsButton(item.id)}</td></tr>`).join('') : '<tr><td colspan="6" class="empty">Aucun incident pour ces filtres.</td></tr>';
+        queueStatus.textContent = `${queue.total} incident(s) · Page ${queue.page} sur ${queue.pages}`;
+        previous.disabled = queue.page<=1;
+        next.disabled = queue.page>=queue.pages;
+      }catch(error){if(sequence===queueRequest)queueStatus.textContent = statusMessage(error);}
+    }
+
+    async function refresh(){
+      refreshButton.disabled = true;
+      await Promise.all([refreshBlocks(),refreshQueue()]);
+      refreshButton.disabled = false;
+    }
+
+    async function openDetail(path){
+      const sequence = ++detailRequest;
+      detail.innerHTML = '<p role="status">Chargement du détail…</p>';
+      if(!dialog.open)dialog.showModal();
+      try{
+        const {incident,total,ips,accounts,attempts,review} = await api(`/api/audit/incidents/${path}`);
+        if(sequence!==detailRequest || !dialog.open)return;
+        const targets = accounts.map(esc).join(', ') || 'Aucun compte identifié';
+        const addresses = ips.map(esc).join(', ') || 'Aucune IP enregistrée';
+        const count = total > attempts.length ? `${attempts.length} sur ${total} tentatives` : `${total} tentative(s)`;
+        detail.innerHTML = `<h3>${esc(incident.reason)}</h3><p>${esc(incident.target)} · ${date(incident.time)} UTC</p><dl class="incident-facts"><div><dt>Comptes identifiés</dt><dd>${targets}</dd></div><div><dt>IP observées</dt><dd>${addresses}</dd></div></dl>${incidentReview(review)}<h3>Tentatives dans le journal</h3><p>${count}</p>${auditTable(attempts)}`;
+        document.getElementById('incident-review-form')?.addEventListener('submit', async event => {
+          event.preventDefault();
+          const form = event.currentTarget;
+          const submit = form.querySelector('button[type="submit"]');
+          const message = document.getElementById('incident-review-status');
+          submit.disabled = true;
+          message.textContent = 'Enregistrement…';
+          try{
+            const values = Object.fromEntries(new FormData(form));
+            const result = await api(`/api/audit/incidents/${path}/review`, 'POST', {...values,version:review.version});
+            if(sequence===detailRequest && dialog.open)await openDetail(path);
+            toast(result.message);
+            await refreshQueue();
+          }catch(error){message.textContent = statusMessage(error);}
+          finally{submit.disabled = false;}
+        });
+      }catch(error){
+        if(sequence!==detailRequest || !dialog.open)return;
+        detail.innerHTML = `<p role="alert">${esc(statusMessage(error))}</p><button class="button secondary" id="retry-incident" type="button">Réessayer</button>`;
+        document.getElementById('retry-incident').onclick = () => openDetail(path);
+      }
+    }
+
+    panel.addEventListener('click', event => {
+      const button = event.target.closest('[data-incident-path]');
+      if(button)openDetail(button.dataset.incidentPath);
+    });
+    filters.addEventListener('submit', event => {event.preventDefault();refreshQueue(1);});
+    previous.addEventListener('click', () => refreshQueue(currentPage-1));
+    next.addEventListener('click', () => refreshQueue(currentPage+1));
+    refreshButton.addEventListener('click', refresh);
+    setInterval(updateCountdowns, 1000);
+    refresh();
+  }
+
+  async function loadSecurityOverview(){
+    const indicators = document.getElementById('security-indicators');
+    const chart = document.getElementById('security-chart');
+    const rules = document.getElementById('security-policy');
+    try{
+      const {days,coverage,policy} = await api('/api/audit/metrics');
+      const total = key => days.reduce((sum,day) => sum + day[key], 0);
+      const stat = (label,value,detail) => `<div class="security-stat"><span>${label}</span><strong>${value}</strong><small>${detail}</small></div>`;
+      indicators.innerHTML = stat('Connexions réussies',total('accepted'),'7 derniers jours')
+        + stat('Refus journalisés',total('refused'),'7 derniers jours')
+        + stat('Alertes de connexion',total('alerts'),'7 derniers jours')
+        + stat('Comptes protégés par 2FA',`${coverage.protected}/${coverage.active}`,`${coverage.protectedAdmins}/${coverage.admins} administrateurs protégés`);
+      const max = Math.max(1,...days.map(day => day.accepted+day.refused));
+      const label = day => new Intl.DateTimeFormat('fr-FR',{weekday:'short',day:'numeric',month:'short',timeZone:'UTC'}).format(new Date(day.date+'T00:00:00Z'));
+      const bar = (value,name) => `<span class="security-bar-${name}" style="--bar-size:${value/max*100}%"></span>`;
+      chart.innerHTML = `<div class="table-wrap"><table class="security-activity"><thead><tr><th>Jour</th><th>Connexions</th><th>Réussites</th><th>Refus</th><th>Alertes</th></tr></thead><tbody>${days.map(day => `<tr><th scope="row">${label(day)}</th><td><div class="security-bar" aria-hidden="true">${bar(day.accepted,'success')}${bar(day.refused,'blocked')}</div></td><td>${day.accepted}</td><td>${day.refused}</td><td>${day.alerts}</td></tr>`).join('')}</tbody></table></div>`;
+      const duration = seconds => seconds%60===0 ? `${seconds/60} min` : `${seconds} s`;
+      rules.innerHTML = `<dl class="security-rules"><div><dt>Verrouillage d’un compte</dt><dd>${policy.accountFailures} échecs · ${duration(policy.accountBlockSeconds)} de blocage</dd></div><div><dt>Brute force par IP</dt><dd>${policy.ipFailures} échecs en ${duration(policy.windowSeconds)} · ${duration(policy.blockSeconds)} de blocage de l’IP</dd></div><div><dt>Brute force distribuée</dt><dd>${policy.distributedFailures} échecs depuis ${policy.distributedIps} IP en ${duration(policy.windowSeconds)} · blocage du compte pour ${duration(policy.blockSeconds)}</dd></div><div><dt>Password spraying suspecté</dt><dd>${policy.sprayAccounts} comptes visés par une même IP en ${duration(policy.windowSeconds)} · blocage de l’IP pour ${duration(policy.blockSeconds)}</dd></div></dl>`;
+    }catch(error){chart.textContent = statusMessage(error);rules.textContent = 'Paramètres indisponibles.';}
+  }
+
   function audit(){
-    const active=db.users.filter(u=>u.status==='Actif'),coverage=active.length?Math.round(active.filter(u=>u.mfa).length/active.length*100):0;
-    const blocked=db.logs.filter(l=>l.blocked||l.result==='Bloqué').length;
-    content.innerHTML=`<div class="page-heading soc-heading"><div><p class="section-label">VOTRE CENTRE DE CONTRÔLE</p><h1>Journal d’audit</h1><p class="subtitle">Examinez les connexions et les changements effectués dans votre espace.</p></div><div class="soc-heading-actions"><span class="live-label"><i></i>JOURNAL SERVEUR</span><button class="button secondary" id="export-audit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 16v5h16v-5"/></svg>Exporter le journal</button></div></div>
-    <div class="kpi-grid">
-      <section class="kpi-card"><div class="kpi-top"><span>Total événements</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg></div><div class="kpi-value">${String(db.meta.auditTotal||0).padStart(2,'0')}</div><p>Événements enregistrés</p></section>
-      <section class="kpi-card kpi-alert"><div class="kpi-top"><span>Brute-force bloquées</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 9 17H3ZM12 9v4m0 3v1"/></svg></div><div class="kpi-value">${String(blocked).padStart(2,'0')}<span class="kpi-chip">IDENTITY</span></div><p>Verrouillages Identity après échecs</p></section>
-      <section class="kpi-card"><div class="kpi-top"><span>Adoption 2FA</span><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="9" width="12" height="12" rx="2"/><path d="M9 9V6a3 3 0 0 1 6 0v3m-3 5v3"/></svg></div><div class="kpi-value">${coverage}<small>%</small><a href="/Portal/Setup2FA" class="kpi-arrow" aria-label="Configurer la 2FA">↗</a></div><div class="kpi-progress" role="meter" aria-label="Couverture 2FA activée" aria-valuenow="${coverage}" aria-valuemin="0" aria-valuemax="100"><i style="width:${coverage}%"></i></div><p>Sur ${active.length} comptes actifs · Identity</p></section>
-      <section class="kpi-card kpi-offline"><div class="kpi-top"><span>Latence API</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></div><div class="kpi-value">${db.latency||0}<small>ms</small><span class="offline-dot"></span></div><p>Temps aller-retour de chargement</p></section>
-    </div>
-    <section class="panel soc-panel"><div class="panel-header"><div class="panel-title"><span class="panel-symbol" aria-hidden="true">≡</span><div><h2>Flux des événements</h2><p>Les traces de votre périmètre de serveur.</p></div></div><span class="stream-label"><i></i>FILTRES EN TEMPS RÉEL</span></div><div class="toolbar audit-toolbar"><div class="search-field"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg><input type="search" id="audit-search" placeholder="Rechercher un utilisateur, une action…" aria-label="Rechercher dans le journal"><kbd>/</kbd></div><select id="result-filter" aria-label="Filtrer par statut"><option value="">Tous les statuts</option><option value="unsuccessful">Alertes et refus</option><option>Succès</option><option>Échec</option><option>Bloqué</option><option>Refusé</option></select><label class="date-filter"><span>Du</span><input type="date" id="audit-from" aria-label="Date de début"></label><label class="date-filter"><span>Au</span><input type="date" id="audit-to" aria-label="Date de fin"></label></div><div class="filter-reset-row"><button type="button" class="text-button" id="clear-audit">Effacer les filtres</button></div><div id="audit-table"></div><div class="table-footer"><span><i class="status-dot"></i><span id="audit-count" aria-live="polite"></span></span><span>Source : base SQLite <span class="mono">/ SERVER</span></span></div></section><p class="notice-text">Journal enregistré côté serveur · export limité à 10 000 événements · aucune certification de conformité revendiquée.</p>`;
-    document.addEventListener('keydown',e=>{if(e.key==='/'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)){e.preventDefault();document.getElementById('audit-search').focus();}});
-    if(new URLSearchParams(location.search).get('review')==='unsuccessful')document.getElementById('result-filter').value='unsuccessful';
-    const filtered=()=>{const q=normalizeQuery(document.getElementById('audit-search').value),r=document.getElementById('result-filter').value,from=document.getElementById('audit-from').value,to=document.getElementById('audit-to').value;return db.logs.filter(l=>{const dt=new Date(l.time),day=[dt.getFullYear(),String(dt.getMonth()+1).padStart(2,'0'),String(dt.getDate()).padStart(2,'0')].join('-');return normalizeQuery(l.user+' '+l.action+' '+l.resource).includes(q)&&(!r||(r==='unsuccessful'?l.result!=='Succès':r===l.result))&&(!from||day>=from)&&(!to||day<=to);});};let auditSequence=0;const auditParams=()=>new URLSearchParams({query:document.getElementById('audit-search').value,result:document.getElementById('result-filter').value,from:document.getElementById('audit-from').value,to:document.getElementById('audit-to').value});const refresh=async()=>{const sequence=++auditSequence;try{const result=await api('/api/audit?'+auditParams());if(sequence!==auditSequence)return;document.getElementById('audit-table').innerHTML=auditTable(result.logs);document.getElementById('audit-count').textContent=result.total+' événement(s) · 500 derniers au maximum';}catch(error){toast(error.message);}};['audit-search','result-filter','audit-from','audit-to'].forEach(id=>document.getElementById(id).oninput=refresh);document.getElementById('clear-audit').onclick=()=>{for(const id of ['audit-search','result-filter','audit-from','audit-to'])document.getElementById(id).value='';history.replaceState(null,'',location.pathname);refresh();};document.getElementById('export-audit').onclick=()=>{location.assign('/api/audit/export?'+auditParams());};refresh();}
+    const search = document.getElementById('audit-search');
+    const result = document.getElementById('result-filter');
+    const from = document.getElementById('audit-from');
+    const to = document.getElementById('audit-to');
+    const count = document.getElementById('audit-count');
+    const exportButton = document.getElementById('export-audit');
+    let auditSequence = 0;
+    const auditParams = () => new URLSearchParams({query:search.value.trim(),result:result.value,from:from.value,to:to.value});
+    const refresh = async () => {
+      const sequence = ++auditSequence;
+      try{
+        const response = await api('/api/audit?'+auditParams());
+        if(sequence!==auditSequence)return;
+        document.getElementById('audit-table').innerHTML = auditTable(response.logs);
+        count.textContent = `${response.total} événement(s) · 500 derniers au maximum`;
+      }catch(error){if(sequence===auditSequence)count.textContent = statusMessage(error);}
+    };
+    document.addEventListener('keydown',event => {
+      if(event.key==='/'&&!document.querySelector('dialog[open]')&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)){
+        event.preventDefault();search.focus();
+      }
+    });
+    if(new URLSearchParams(location.search).get('review')==='unsuccessful')result.value = 'unsuccessful';
+    document.getElementById('audit-filters').addEventListener('submit',event => {event.preventDefault();refresh();});
+    document.getElementById('clear-audit').onclick = () => {
+      document.getElementById('audit-filters').reset();
+      history.replaceState(null,'',location.pathname);
+      refresh();
+    };
+    exportButton.hidden = !can('audit.export');
+    exportButton.onclick = () => {location.assign('/api/audit/export?'+auditParams());};
+    bindIncidents();
+    loadSecurityOverview();
+    refresh();
+  }
   function account(){content.innerHTML=heading('Mon compte','Votre profil et les options de sécurité du compte.')+`<div class="account-grid"><section class="panel"><div class="panel-header"><h2>Informations personnelles</h2>${badge('Compte Identity','neutral')}</div><div class="panel-body"><span class="avatar large-avatar">${esc(initials(db.profile.name))}</span><form id="profile-form" class="profile-form"><label>Nom complet<input name="name" required maxlength="80" value="${esc(db.profile.name)}"></label><label>E-mail<input name="email" type="email" required maxlength="120" value="${esc(db.profile.email)}"></label><label>Rôle<input value="${esc(db.profile.role||'Employé')}" readonly></label><label>Mot de passe actuel<input name="password" type="password" required autocomplete="current-password"></label><p id="profile-error" class="form-message" role="alert"></p><button class="button primary">Enregistrer le profil</button><button type="button" id="logout" class="button secondary">Se déconnecter</button></form></div></section><section class="panel"><div class="panel-header"><h2>Authentification à deux facteurs</h2>${badge(db.users[0].mfa?'Activée · Identity':'Désactivée · Identity',db.users[0].mfa?'success':'warning')}</div><div class="panel-body"><h2>Un second niveau de vérification</h2><p class="muted">Associez Google Authenticator pour sécuriser votre connexion.</p><div class="security-note">Le second facteur est vérifié par Identity sur le serveur. Conservez vos codes de récupération.</div><a href="/Portal/Setup2FA" class="button primary">Configurer Google Authenticator ↗</a><p class="notice-text">QR code et vérification TOTP côté serveur.</p><a href="/Portal/Login" class="text-link">Tester la connexion →</a></div></section></div>`;
     document.getElementById('profile-form').onsubmit=async e=>{e.preventDefault();const f=e.target;try{await api('/api/account/profile','POST',{name:f.elements.name.value.trim(),email:f.elements.email.value.trim(),password:f.elements.password.value});await reload();account();toast('Profil enregistré.');}catch(error){document.getElementById('profile-error').textContent=error.message;}};
     document.getElementById('logout').onclick=async()=>{try{await api('/api/auth/logout','POST',{});location.assign('/Portal/Login');}catch(error){toast(error.message);}};
